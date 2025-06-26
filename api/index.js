@@ -27,7 +27,8 @@ app.use(cookieParser());
 
 const allowedOrigins = [
   'http://localhost:3000',
-  'https://bitbitech.vercel.app'
+  'https://bitbitech.vercel.app',
+  credentials: true
 ];
 
 const corsOptions = {

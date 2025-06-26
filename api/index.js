@@ -37,7 +37,7 @@ app.use(cookieParser());
 
 const allowedOrigins = [
   'http://localhost:3000',
-  'https://octa-xtb.vercel.app'
+  'https://bitbitech.vercel.app'
 ];
 
 const corsOptions = {

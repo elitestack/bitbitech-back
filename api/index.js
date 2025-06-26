@@ -1,8 +1,7 @@
-// import dotenv from 'dotenv';
-// dotenv.config();
-// Load environment variables FIRST
+// api/index.js
 import dotenv from 'dotenv';
-dotenv.config({ path: './.env' }); // Explicitly specify the path
+dotenv.config(); // Remove explicit path for Vercel compatibility
+
 import express from 'express';
 import { google } from 'googleapis';
 import mongoose from 'mongoose';
@@ -13,8 +12,6 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import cookieParser from 'cookie-parser';
 import emailService from './emailService.js';
-import { createRequire } from 'module'; // For emailService.js which still uses require
-// Add at the top with other imports
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -22,18 +19,11 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-
-const require = createRequire(import.meta.url);
-
 const app = express();
-
-
 
 // Security Middleware
 app.use(helmet());
 app.use(cookieParser());
-
-
 
 const allowedOrigins = [
   'http://localhost:3000',
@@ -53,9 +43,6 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
-
-app.use(cors(corsOptions));
-
 app.use(express.json());
 
 // Rate Limiting
@@ -65,8 +52,11 @@ const limiter = rateLimit({
 });
 app.use('/api/', limiter);
 
-// MongoDB Connection
-const uri = process.env.MONGODB_URI || 'mongodb+srv://brokertest:WuseNGm9pxOqcCL8@cluster0.zpeipot.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0';
+// MongoDB Connection - REMOVE HARD-CODED CREDENTIALS
+const uri = process.env.MONGODB_URI;
+if (!uri) {
+  throw new Error('MONGODB_URI environment variable is not defined');
+}
 
 mongoose.connect(uri, {
   useNewUrlParser: true,
@@ -74,6 +64,7 @@ mongoose.connect(uri, {
 })
 .then(() => console.log('✅ MongoDB connected successfully 🚀'))
 .catch(err => console.error('❌ MongoDB connection error:', err));
+
 
 // Schemas
 
@@ -454,7 +445,7 @@ app.post('/api/register', async (req, res) => {
 
     const newUser = new User({ name, email, password, phone, currency, country });
     await newUser.save();
-    await emailService.sendWelcomeEmail(newUser);
+
 
     const newWallet = new UserWallet({ 
       userId: newUser._id,
@@ -524,7 +515,7 @@ app.post('/api/login', async (req, res) => {
     // Store refresh token
     user.refreshTokens.push(refreshToken);
     await user.save();
-    // await emailService.sendWelcomeEmail(user);
+
     res.status(200).json({ 
       token,
       refreshToken,
@@ -686,7 +677,6 @@ app.post('/api/deposit', authenticateToken, async (req, res) => {
 
     const user = req.headers['email'];
     await newDeposit.save();
-    await emailService.sendDepositConfirmation(user, newDeposit);
 
 
     res.status(201).json({
@@ -806,7 +796,6 @@ app.post('/api/withdraw', authenticateToken, async (req, res) => {
     wallet.availableBalance -= amount;
     await wallet.save();
     const user = await User.findById(req.user._id);
-    await emailService.sendWithdrawalRequest(user, withdrawal);
 
 
     res.status(201).json({
@@ -1102,14 +1091,6 @@ app.put('/api/admin/users/:id/wallet',  async (req, res) => {
     });
     await transaction.save();
 
-    // Send notification to user
-    await emailService.sendBalanceUpdateNotification(
-      user,
-      action,
-      amount,
-      updatedWallet.availableBalance,
-      note
-    );
 
     res.json({
       message: 'Wallet updated successfully',
@@ -1190,11 +1171,11 @@ app.put('/api/admin/deposits/:id', authenticateAdmin, async (req, res) => {
         { new: true, upsert: true }
       );
 
-      await emailService.sendDepositReceipt(
-        deposit.userId,
-        deposit,
-        wallet.availableBalance
-      );
+    //   await emailService.sendDepositReceipt(
+    //     deposit.userId,
+    //     deposit,
+    //     wallet.availableBalance
+    //   );
     }
 
     deposit.status = status;
@@ -1246,9 +1227,15 @@ app.put('/api/admin/transactions/:id/status',  async (req, res) => {
 
 
 
-    const validStatuses = {
+//     const validStatuses = {
+//   deposit: ['pending', 'completed', 'failed', 'cancelled'],
+//   withdrawal: ['pending', 'processed', 'failed', 'cancelled']
+// };
+
+
+const validStatuses = {
   deposit: ['pending', 'completed', 'failed', 'cancelled'],
-  withdrawal: ['pending', 'processed', 'failed', 'cancelled']
+  withdrawal: ['pending', 'processing', 'completed', 'failed', 'cancelled'] // Add 'completed'
 };
 
 
@@ -1258,7 +1245,19 @@ app.put('/api/admin/transactions/:id/status',  async (req, res) => {
         code: 'INVALID_STATUS',
         validStatuses: validStatuses[transactionType]
       });
-    }
+    }else if (status === 'completed' && transactionType === 'withdrawal') {
+  await UserWallet.findOneAndUpdate(
+    { userId: transaction.userId._id },
+    { 
+      $inc: { 
+        totalBalance: -transaction.amount,
+        totalWithdrawals: transaction.amount
+      } 
+    },
+    { new: true, upsert: true }
+  );
+}
+
 
     // 3. Handle wallet balance changes
     if (status === 'completed' && transactionType === 'deposit') {
@@ -1381,11 +1380,11 @@ app.put('/api/admin/withdrawals/:id', authenticateAdmin, async (req, res) => {
         { new: true }
       );
 
-      await emailService.sendWithdrawalCancellation(
-        withdrawal.userId,
-        withdrawal,
-        wallet.availableBalance
-      );
+    //   await emailService.sendWithdrawalCancellation(
+    //     withdrawal.userId,
+    //     withdrawal,
+    //     wallet.availableBalance
+    //   );
     }
 
     // If completing the withdrawal
@@ -1396,11 +1395,11 @@ app.put('/api/admin/withdrawals/:id', authenticateAdmin, async (req, res) => {
         { new: true }
       );
 
-      await emailService.sendWithdrawalReceipt(
-        withdrawal.userId,
-        withdrawal,
-        wallet.availableBalance
-      );
+    //   await emailService.sendWithdrawalReceipt(
+    //     withdrawal.userId,
+    //     withdrawal,
+    //     wallet.availableBalance
+    //   );
     }
 
     await withdrawal.save();
@@ -1437,14 +1436,14 @@ app.post('/api/admin/notifications', authenticateAdmin, async (req, res) => {
       users = await User.find({ _id: { $in: userIds } }).select('email name');
     }
 
-    const sendPromises = users.map(user => 
-      emailService.sendCustomNotification(
-        user,
-        subject,
-        message,
-        htmlContent
-      )
-    );
+    // const sendPromises = users.map(user => 
+    //   emailService.sendCustomNotification(
+    //     user,
+    //     subject,
+    //     message,
+    //     htmlContent
+    //   )
+    // );
 
     await Promise.all(sendPromises);
 
@@ -1463,16 +1462,6 @@ app.post('/api/admin/notifications', authenticateAdmin, async (req, res) => {
 
 
 
-
-// Error Handling
-app.use((err, req, res, next) => {
-  console.error(err.stack);
-  res.status(500).json({ message: 'Internal server error' });
-});
+export default app;
 
 
-
-
-
-const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
